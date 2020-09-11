@@ -45,7 +45,7 @@
   Owner_id - id пользователя или группы ( для групп - отрицательные )
   ```python
   owner = 12345#Если None - аудио будут браться из своей музыки
-  data = vk.load(user_id)#получаем наши аудио 
+  data = vk.load(owner)#получаем наши аудио 
   
   second_audio = data.Audios[1]#берем вторую аудиозапись
   format_string = "{title} - {artist} ({owner_id}_{id}) -> {url}"
