@@ -12,7 +12,7 @@ class AudioList(list):
 		for i in self:
 			ans.append(i.toArray())
 		return ans
-	def move(self,from_index:int=None,to_index:int=None):
+	def move(self,from_index:int,to_index:int):
 		before_index_id=to_index
 		if(to_index==from_index):return;
 		elif(to_index>from_index):
@@ -28,4 +28,9 @@ class AudioList(list):
 			self.insert(to_index, self.pop(from_index)) 
 			
 		return ans
+	def zip(self,from_index=0,to_index=-1):
+		if(to_index == -1):
+			to_index = len(self)-1
+		return ",".join(self[i].zip() for i in range(from_index,to_index))
+
 

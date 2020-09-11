@@ -6,27 +6,31 @@ from .audio_enum_index import *
 import json as json_parser
 import vk_api,re,json,os,time,requests,random
 import vk_audio_C_FUNC as func_c
-
 class VkAudio(object):
     @property
     def _enum_p(self):
         if(not self.__enum_p):self.__enum_p=AudioEnumIndex(html.fromstring(self.vk.http.get('https://vk.com/').text).head,self.vk)
         return self.__enum_p;
-    def __init__(self,vk=None,login=None,password=None,count_audios_to_get_url=10,your_id=None):
+    def __init__(self,vk=None,login=None,password=None,remixsid_cookie=None,count_audios_to_get_url=10,your_id=None):
         """Модуль аудио вк. 
-            vk - vk_api.VkApi или login и пароль
+            :param vk: сессия vk_api.VkApi или login и пароль
             :param count_audios_to_get_url: У скольких аудио получать ссылки за раз. Чем меньше значение, тем быстрее будут получаться ссылки. Устанавливать значение в пределах 1-10
-            :param your_id: Ваш id. Если не задан, то будет получен методом users.get. При указании неверного id могут получиться неиграбельные ссылки.
+            :param remixsid_cookie: Кука remixsid, которую можно взять из браузера. Один из вариантов авторизации.
+            :param your_id: Ваш id. При указании неверного id могут получиться неиграбельные ссылки. Если не указан - берется либо из токена либо методом users.get
             """
         if login is not None and password is not None:
             self.vk=vk_api.VkApi(login,password);
-            self.vk.http.verify=False
             self.vk.auth()
         elif vk is not None:
             self.vk=vk;
-            self.vk.http.verify=False 
+        elif remixsid_cookie is not None:
+            vk = self.vk = vk_api.VkApi()
+            vk.http.cookies.set("remixsid",remixsid_cookie)
+            if(your_id is None):raise ValueError("If you're auth with cookie your_id should be not None")
+            from warnings import warn
+            warn("Be careful - you may get some wierd errors - the may happend because cookie is invalid or out of date",UserWarning)
         else:raise ValueError("No auth data passed");
-        self.uid = your_id if your_id is not None else self.vk.method("users.get")[0]["id"] 
+        self.uid = your_id or ('user-id' in vk.token and vk.token['user-id']) or self.vk.method("users.get")[0]["id"] #Аналогично коду your_id if your_id else ...
         self.c_u = count_audios_to_get_url
         self.__enum_p=None
     def load(self,owner_id=None) -> Audio:
@@ -54,7 +58,7 @@ class VkAudio(object):
         if 'playlist' in json['sectionData']['all'] and json['sectionData']['all']['playlist'] and json['sectionData']['all']['playlist']['list']:
             audio_to_return.load_audios_from_js(json['sectionData']['all']['playlist']['list']);
         return audio_to_return
-    def load_artist(self,artist_nickname=None,artist_id=None) -> Audio:
+    def load_artist(self,artist_nickname=None,artist_id=None,artist_hash=None) -> Audio:
         """
         Получение музыки артиста. Возможно без авторизации
         :param artist_nickname: Никнейм артиста.
@@ -62,6 +66,11 @@ class VkAudio(object):
         :param artist_id: Id артиста.
         :type artist_id: int or NoneType
         """
+        if(artist_hash is not None):
+            if(artist_hash.startswith("s")):return self.search(query = artist_hash[1:])
+            elif(artist_hash.startswith("a")):artist_nickname=artist_hash[1:]
+            elif(artist_hash.startswith("i")):artist_id=artist_hash[1:]
+            else:raise ValueError("Invalid artist hash - you have to get it from method zip_artist in Playlist or AudioObj")
         artist_href = ""
         if(artist_nickname is not None): 
             if("/" not in artist_nickname):artist_href = "artist/"+artist_nickname
@@ -94,8 +103,8 @@ class VkAudio(object):
             json_albums = self._parse_json_from_js( h[1].text)
             albums_html = html.fromstring(json_albums['payload'][1][1]);
         return ArtistAudio(self,audios_html,albums_html,artist_nickname);
-    def search(self,query="Imagine dragons"):
-        resp = self.action(data= {
+    def search(self,query="Imagine dragons") -> AudioSearch:
+        resp = self._action(data= {
             'act': 'section',
             'al': 1,
             'claim': 0,
@@ -105,20 +114,24 @@ class VkAudio(object):
             'section': 'search'
         });
         a = AudioSearch(self,resp['payload'][1][0])
+        a.load_playlists_from_html(a._html);
         json = resp['payload'][1][1]
-        a.load_playlists_from_js(json['playlists']);
-        if 'playlist' in json and json['playlist']['list']:
+        if ('playlist' in json and "list" in json['playlist'] and json['playlist']['list']):
             a.load_audios_from_js(json['playlist']['list'])
         return a;
-    def get_only_audios(self,owner_id=None,offset=0,count=None,need_enum=False):
-        if(not need_enum):
-            return [i for i in self._get_only_audios_enum(owner_id,offset,count) if i!=None]
-        else:
-            return self._get_only_audios_enum(owner_id,offset,count)
+    def get_only_audios(self,owner_id=None,offset=0):
+        """Получение аудиозаписей пользователя ( или группы )
+        :param owner_id: id пользователя ( или группы )
+        :type owner_id: int or NoneType
+        :param offset: смещение
+        :type offset: int
+        """
+        if(owner_id is None ): owner_id=self.uid
+        return Audio.load_audios(self,offset,owner_id=owner_id)
     def get_by_id(self,audios):
         '''
         Получить аудиозапись по id
-        :param audios: Аудиозаписи, которые надо получить перечисленные через запятую.
+        :param audios: Аудиозаписи, которые надо получить перечисленные через запятую ( или в виде списка ).
         :type audios: str or list
         '''
         if(isinstance(audios,str)):audios = audios.split(",")
@@ -138,26 +151,6 @@ class VkAudio(object):
                 if(c%10==9):
                     auds = []
         return ans;
-    def _get_only_audios_enum(self,owner_id,offset,count):
-        resp = self.action("https://m.vk.com/audios%i"%(owner_id if owner_id is not None else self.uid),
-            data={
-            '_ajax': 1,
-            'offset': offset    
-           });
-        if(not resp['data'] or not resp['data'][0] or not resp['data'][1]):
-            yield;
-        else:
-            for i in Audio.load_audios_from_js([],
-                    (resp['data'][0][key][1] for key in resp['data'][0]),
-                    self):
-                yield i;
-                if(count is not None):
-                    count-=1
-                    if(count==0):break;            
-            if(count is None or count>0):
-                for i in self._get_only_audios_enum(owner_id,offset+c+1,None if count is None else count-c):
-                    if(i):
-                        yield i 
     def _get_script_el(self,tree):
         for i in tree.body.getchildren()[::-1]:
             if(i.tag=='script'):
@@ -175,7 +168,7 @@ class VkAudio(object):
             return json_parser.loads(resp.text.lstrip('<!--'))
         except json.decoder.JSONDecodeError:
             pass
-    def action(self,url="https://vk.com/al_audio.php",data={},params={},method="post",**args):
+    def _action(self,url="https://vk.com/al_audio.php",data={},params={},method="post",**args):
         from .vk_audio import VkAudio
         r = self.vk.http if(isinstance(self,VkAudio)) else self.http if isinstance(self,vk_api.VkApi) else self
         r.headers['X-Requested-With']='XMLHttpRequest'

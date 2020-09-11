@@ -1,6 +1,7 @@
 from lxml import html
 from .audio import Audio;
-import re
+import re,json as json_parser
+from html import unescape
 class Playlist(object):
     def __init__(self,r_h,vk_audio):
         self._audios=None
@@ -13,13 +14,13 @@ class Playlist(object):
         p.id=js['id'];
         if(not isinstance(p.id,int)):raise ValueError("id is invalid")
         p.raw_id=p.__parse(js,'raw_id','rawId')
-        p.title=js['title']
-        p.description=js['description']
+        p._title=js['title']
+        p._description=js['description']
 
         author_line = p.__parse(js,'author_line','authorLine');
         auth=html.fromstring(author_line).find_class("audio_pl_snippet__artist_link") if author_line else ''
         
-        p.author_info =[{"name":i.text,"href":i.attrib['href']} for i in auth] if auth else []
+        p.author_info =[{"name":unescape(i.text),"href":i.attrib['href']} for i in auth] if auth else []
 
         p.listens = js['listens']
         p.has_image=bool(js['thumb']) if 'thumb' in js else False;
@@ -58,15 +59,15 @@ class Playlist(object):
     def from_html(html,vk_audio,reorder_hash=None):                
         p = Playlist(reorder_hash,vk_audio);
         p.owner_id,p.id= (int(i) for i in html.attrib['data-id'].split('_'))
-        p.title= html.find_class("audio_item__title")[0].text
+        p._title= html.find_class("audio_item__title")[0].text
         p.audios_count = int(html.find_class("audio_pl__stats_count")[0].text)
         p.raw_id=html.attrib['data-raw-id'];
-        p.description=""
+        p._description=""
 
         auth=html.find_class("audio_pl_snippet__artist_link")
         
 
-        p.author_info =[{"name":i.text,"href":i.attrib['href']} for i in auth]
+        p.author_info =[{"name":unescape(i.text),"href":i.attrib['href']} for i in auth]
 
         p.my_playlist=False
         p.can_edit=False
@@ -93,12 +94,13 @@ class Playlist(object):
         return {
             "owner_id":self.owner_id,
             "id":self.id,
+            "access_hash":self.access_hash,
             "title":self.title,
             "description":self.description,
             "author":self.author,
             "author_info":self.author_info,
             "listens":self.listens,
-            "thumb":self.thumb,
+            "images":self.images,
             "audios_count":self.audios_count
         }
     def artist_music(self,index=0):
@@ -108,10 +110,72 @@ class Playlist(object):
         :type index: int
         '''
         if("/artist/" in self.author_info[index]['href']):
-            artist = self.author_hrefs[index]['href'].lstrip("https://vk.com/");
+            artist = self.author_info[index]['href'].lstrip("https://vk.com/");
             
             return self._vk_audio.load_artist(artist)
         return self._vk_audio.search(query=self.artist);
+    #region zip
+    def zip(self,need_hashes=False):
+        '''Сжатие данных о плейлисте в формат json.
+           :param need_hashes: Нужно ли сжимать hash'ы для редактирования и добавления
+        '''
+        b = (self.my_playlist and 0b1)+ (self.can_edit and 0b10)
+        info = [self.owner_id,
+                self.id,
+                self.access_hash,
+                self._title,
+                self._description,
+                self.images,
+                self.audios_count,
+                self.listens,
+                b,
+                [(i["name"],i['href']) for i in self.author_info]
+            ]
+        if(need_hashes):info+=[self.edit_hash,self.follow_hash,self._reorder_hash];
+        return json_parser.dumps(info);
+    def zip_audios(self):
+        '''Получение hash'a, с помощью которого можно будет получить аудиозаписи
+            из данного плейлиста методом Playlist.unzip_audios
+            ВНИМАНИЕ! Аудиозаписи менять местами методом move будет нельзя
+        '''
+        return "{}_{}_{}".format(self.owner_id,self.id,self.access_hash)
+    def zip_artist(self,index:int=0):
+        """Метод, который возвращает хеш артиста. Пототм по этому хешу можно получить его музыку - методом vk_audio.load_artist с параметром artist_hash"""
+        if("/artist/" in self.author_info[index]['href']):
+            return 'a'+ self.author_info[index]['href'].lstrip("https://vk.com/").replace("artist",'').lstrip("/")
+        return 's'+self.author_info[index]['name']
+    @staticmethod
+    def unzip(object,vk_audio):
+        if(isinstance(object,str)):object = json_parser.loads(object);
+        if(not isinstance(object,(list,tuple)) or len(object) not in (10,13)):raise ValueError("argument should be json from zip method")
+        p = Playlist(None,vk_audio);
+        p._vk_audio = vk_audio
+        p.owner_id,p.id,p.access_hash,p._title,p._description,p.images,p.audios_count,p.listens,b,auth_info = object[:10]
+        p.my_playlist = bool(b>>0&1)
+        p.can_edit = bool(b>>1&1)
+        p.edit_hash,p.follow_hash,p._reorder_hash = object[10:] if(len(object)>10) else (None,None,None)
+
+        p.author_info = [{"name":i[0],"href":i[1]} for i in auth_info]
+        return p
+    @staticmethod
+    def unzip_audios(object,vk_audio):
+        owner_id,id,access_hash = (int(item) if i!=2 else item for i,item in enumerate(object.split("_")))
+        audio = Audio(vk_audio,owner_id);
+        return audio.load_audios(0,id,access_hash,owner_id)
+    #endregion
+    #region properties
+    @property
+    def title(self):
+        return unescape(self._title);
+    @title.setter
+    def title(self,value):self._title=title
+
+    @property
+    def description(self):
+        return unescape(self._description);
+    @description.setter
+    def description(self,value):self._description=description
+    #endregion
     @property
     def Audios(self):
         if(self._audios is None):
@@ -147,15 +211,15 @@ class Playlist(object):
                 "title":self.title if title is None else title}
         if(photo==False):data['cover']=-1;
         elif(photo is not None):data['cover']=photo;
-        resp =self._vk_audio.action("https://vk.com/al_audio.php?act=save_playlist",data);
+        resp =self._vk_audio._action("https://vk.com/al_audio.php?act=save_playlist",data);
         if(resp and 'payload' in resp and len(resp['payload'])>=2):
-            self.title=title
-            self.description=description
+            self._title=title
+            self._description=description
             return True
         return resp;
     def delete(self):
         if(self.follow_hash):
-            resp = self._vk_audio.action(data={
+            resp = self._vk_audio._action(data={
                 'act': 'follow_playlist',
                 'al': 1,
                 'hash': self.follow_hash,
@@ -164,7 +228,7 @@ class Playlist(object):
                 'showcase':False
             });
         else:    
-            resp = self._vk_audio.action("https://vk.com/al_audio.php?act=delete_playlist",data={
+            resp = self._vk_audio._action("https://vk.com/al_audio.php?act=delete_playlist",data={
                 'al': 1,
                 'hash': self.edit_hash,
                 'page_owner_id': self.owner_id,
@@ -174,7 +238,7 @@ class Playlist(object):
     def add(self):
         if(not self.follow_hash):raise PermissionError("you do not have permission to do self")
 
-        resp = self._vk_audio.action(data={
+        resp = self._vk_audio._action(data={
             'act': 'follow_playlist',
             'al': 1,
             'hash': self.follow_hash,

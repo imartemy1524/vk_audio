@@ -1,6 +1,7 @@
 import json as json_parser
 from .playlist import Playlist
 import vk_audio_C_FUNC as func_c
+from html import unescape
 class AudioObj(object):
     def __init__(self,enum):
         self.__decoded = False;
@@ -10,10 +11,10 @@ class AudioObj(object):
         self._json = json;
         self.id=json[self.enum.AUDIO_ITEM_INDEX_ID];
         self.owner_id=json[self.enum.AUDIO_ITEM_INDEX_OWNER_ID];
-        self.title=json[self.enum.AUDIO_ITEM_INDEX_TITLE];
-        self.artist=json[self.enum.AUDIO_ITEM_INDEX_ARTIST]
+        self._title=json[self.enum.AUDIO_ITEM_INDEX_TITLE];
+        self._artist=json[self.enum.AUDIO_ITEM_INDEX_ARTIST]
         self.duration=json[self.enum.AUDIO_ITEM_INDEX_DURATION]
-        self.text=json[self.enum.AUDIO_ITEM_INDEX_LYRICS]
+        self._text_id=json[self.enum.AUDIO_ITEM_INDEX_LYRICS]
         self.image=json[self.enum.AUDIO_ITEM_INDEX_COVER_URL]
         self.image = self.image.split(",")[-1] if type(self.image)==str else None
         self.artists_info = json[self.enum.AUDIO_ITEM_INDEX_MAIN_ARTISTS]
@@ -22,7 +23,7 @@ class AudioObj(object):
         __hashes=json[self.enum.AUDIO_ITEM_INDEX_HASHES].split("/");
 
         self.hash ="{0}_{1}_{2}_{3}".format(self.owner_id,self.id,__hashes[self.enum.AUDIO_ACTION_HASH_INDEX],__hashes[self.enum.AUDIO_URL_HASH_INDEX]);
-
+        self._text=None;
         self.__add_hash = __hashes[self.enum.AUDIO_ADD_HASH_INDEX];
         self.__edit_hash = __hashes[self.enum.AUDIO_EDIT_HASH_INDEX];
         self.__delete_hash=__hashes[self.enum.AUDIO_DELETE_HASH_INDEX];
@@ -32,8 +33,6 @@ class AudioObj(object):
         self.can_delete = True if self.__delete_hash else False 
         self.can_restore=False;
         self.deleted=False;
-
-        pass
     @staticmethod
     def parse(json,vk_audio,audios_to_send_with=None,audiosReorderHash=None):
         item = AudioObj(vk_audio._enum_p)
@@ -44,8 +43,17 @@ class AudioObj(object):
         item.get_url_with=audios_to_send_with or [item];
         item.as_object(json)
         return item
+    @staticmethod
+    def unzip(hashes,vk_audio):
+        from .audio import Audio
+        resp = []
+        if(isinstance(hashes,str)):hashes = hashes.split(",")
+        for i in range(0,len(hashes),vk_audio.c_u):
+            l = hashes[i:i+10]
+            resp+=AudioObj.get_json_from_ids(vk_audio,l)
+        return Audio.load_audios_from_js([],resp,vk_audio)        
     def __str__(self):
-        return  str(self.toArray());
+        return str(self.toArray());
     def __getitem__(self,name:str):
         return self.toArray()[name];
     def __eq__(self, value):
@@ -59,8 +67,31 @@ class AudioObj(object):
             "duration":self.duration,
             "image":self.image,
             "url":self.url,
-            "artists_info":self.artists_info 
+            "artists_info":self.artists_info,
+            "gzip_hash":self.hash
         }
+    def zip(self):
+        """Получить hash данной аудиозаписи, чтобы ее можно было потом получить методом AudioItem.unzip
+        """
+        return self.hash
+    #region property
+    @property
+    def title(self):
+        return unescape(self._title)
+    @property
+    def artist(self):
+        return unescape(self._artist)
+    @property
+    def text(self):
+        if(self._text_id):
+            if(not self._text):
+                resp = self._vk_audio._action(data={"act": "get_lyrics",
+                    "aid": self.hash,
+                    "al": 1,
+                    "lid": self._text_id});
+                self._text = resp['payload'][1][0]
+            return self._text
+        return ""
     @property
     def url(self):
         if not self._url:
@@ -73,6 +104,7 @@ class AudioObj(object):
             self.__decoded=True
             self._url=func_c.decode(self._url,self._vk_audio.uid)
         return self._url
+    #endregion
     def artist_music(self,index=0):
         '''
         Получает музыку у артиста данной аудиозаписи ( Или если id артиса не задано выполняет поиск ).
@@ -83,6 +115,14 @@ class AudioObj(object):
             artist = self.artists_info[index];
             return self._vk_audio.load_artist(artist_id= artist['id'])
         return self._vk_audio.search(query=self.artist);
+    def zip_artist(self,index:int=0):
+        """Метод, который возвращает хеш артиста. 
+            Потом по этому хешу можно получить его музыку - методом vk_audio.load_artist с параметром artist_hash"""
+        if(bool(self.artists_info)):
+            artist = self.artists_info[index];
+            return 'i' + artist['id']
+        return 's'+self.artist;
+
     @property
     def Album(self) -> Playlist:
         if(not self._album):return
@@ -90,7 +130,7 @@ class AudioObj(object):
         id = self._album[1]
         access_hash = self._album[2]
         
-        resp = self._vk_audio.action('https://vk.com/al_audio.php?act=load_section',{
+        resp = self._vk_audio._action('https://vk.com/al_audio.php?act=load_section',{
             "access_hash": access_hash,
             "al": 1,
             "claim": 0,
@@ -112,7 +152,7 @@ class AudioObj(object):
         if(text is None):text=self.text;
         if(artist is None):artist=self.artist;
         if(title is None):title=self.title;
-        ans = self._vk_audio.action(data={'act': 'edit_audio',
+        ans = self._vk_audio._action(data={'act': 'edit_audio',
             'aid': self.id,
             'oid': self.owner_id,
             'al': 1,
@@ -134,7 +174,7 @@ class AudioObj(object):
     def delete(self):
         if(not self.can_delete):raise PermissionError("You can not delete self audio")
         elif(self.can_restore):raise PermissionError("self audio have alredy deleted")
-        ans = self._vk_audio.action(data={
+        ans = self._vk_audio._action(data={
             'act': 'delete_audio',
             'aid': self.id,
             'al': 1,
@@ -154,7 +194,7 @@ class AudioObj(object):
             group_id -> id группы, если 0, то добавляется в свои аудиозаписи.
         '''
         if(self.can_restore):return self.restore();
-        ans = self._vk_audio.action('https://vk.com/al_audio.php?act=add',data={
+        ans = self._vk_audio._action('https://vk.com/al_audio.php?act=add',data={
                 'al': 1,
                 'audio_id': self.id,
                 'audio_owner_id': self.owner_id,
@@ -171,7 +211,7 @@ class AudioObj(object):
     def restore(self):
         if(not self.can_restore):
             raise PermissionError("Your audio is not deleted yet");
-        ans = self._vk_audio.action(data={
+        ans = self._vk_audio._action(data={
             'act': 'restore_audio',
             'aid': self.id,
             'al': 1,
@@ -192,7 +232,7 @@ class AudioObj(object):
         if isinstance( move_after_id,AudioObj):
             if(move_after_id.owner_id!=self.owner_id):raise ValueError("{0}\nowner_id is not equals\n{1}\nowner_id".format(repr(self),repr(move_after_id)));
             move_after_id=move_after_id.id
-        resp = self._vk_audio.action(data={
+        resp = self._vk_audio._action(data={
             'act': 'reorder_audios',
             'al': 1,
             'audio_id': self.id,
@@ -213,7 +253,7 @@ class AudioObj(object):
             audios.append(i.hash)
             if(i==move_after_id):
                 audios.append(self.hash);
-        resp = self._vk_audio.action("https://vk.com/al_audio.php?act=save_playlist",{
+        resp = self._vk_audio._action("https://vk.com/al_audio.php?act=save_playlist",{
             "Audios":",".join(audios),
             "al":1,
             "description":playlist.description,
@@ -226,17 +266,10 @@ class AudioObj(object):
         
         return resp;
     #endregion
-    @staticmethod
-    def get_audio_from_hash(hash:str,vk_audio):
-        json=AudioObj.get_json_from_ids(vk_audio,hash)
-        answer = [];
-        for i in json:
-            answer.append(AudioObj(i,vk_audio));
-        return answer
     @staticmethod 
     def get_json_from_ids(session,ids):
         from .vk_audio import VkAudio
-        json =VkAudio.action(session,'https://vk.com/al_audio.php?act=reload_audio',{
+        json =VkAudio._action(session,'https://vk.com/al_audio.php?act=reload_audio',{
             "al":1,
             "ids":ids
             })

@@ -16,9 +16,15 @@ class Audio(object):
         self.vk_audio = vkaudio;
         self._audios_loaded=audios_loaded;
         return    
+    def load_audios_from_html(self,html_code,vk_audio=None,reorder_hash=None):
+        if(vk_audio is None):vk_audio=self.vk_audio
+        obj = html.fromstring(html_code)        
+        json_data = "[{}]".format(",".join(i.attrib['data-audio'] for i in obj.find_class("audio_item") if 'data-audio' in i.attrib))#генерируем json из html
+        return Audio.load_audios_from_js(self,json_data,vk_audio,reorder_hash)
     def load_audios_from_js(self,json,vk_audio=None,reorder_hash=None):
         if(vk_audio is None):vk_audio=self.vk_audio
         if(reorder_hash is None and isinstance(self,Audio)):reorder_hash=self._audiosReorderHash
+        if(isinstance(json,str)):json = json_parser.loads(json)
         q=self if(not isinstance(self,Audio)) else self._audios;
         from .audio_obj import AudioObj
         audios = [];
@@ -27,11 +33,17 @@ class Audio(object):
             q.append(a)
             audios.append(a);
             if(len(audios)>=vk_audio.c_u):audios=[]
-        return self
+        return q
     def load_playlists_from_js(self,json):
         from .playlist import Playlist
         self.Playlists+=[Playlist.from_js(j,self.vk_audio,self._playlistsReorderHash) for j in json if isinstance(j['id'],int)]
         return self;
+    def load_playlists_from_html(self,html_code):
+        from .playlist import Playlist
+        if(isinstance(html_code,str)):html_code = html.fromstring(html_code);
+        for i in html_code.find_class("audio_pl_item2"):
+            self.Playlists.append(Playlist.from_html(i,self.vk_audio,None));
+        return self.Playlists
     @property
     def Audios(self):
         if(not self._audios_loaded):self.load_audios();
@@ -48,7 +60,7 @@ class Audio(object):
         if(owner_id is None):owner_id = self.owner_id;
         else:offset = 30;
         from .audio_obj import AudioObj
-        audios_json = VkAudio.action(vk,data={
+        audios_json = VkAudio._action(vk,data={
             'access_hash': access_hash,
             'act': 'load_section',
             'al': 1,
@@ -83,15 +95,22 @@ class ArtistAudio(Audio):
     def load_audios(self):
         from .audio_obj import AudioObj
         while(self._data_next):
-            resp = self.vk_audio.action(data={"act": "load_catalog_section",
+            resp = self.vk_audio._action(data={"act": "load_catalog_section",
                 "al": 1,
                 "section_id": self._data_id,
                 "start_from": self._data_next
                 });
-            h = html.fromstring(resp['payload'][0][1][0])
-            cls = h.find_class("CatalogBlock__itemsContainer")[0]
-            self._data_next = 'data-next' in cls.attrib and cls.attrib['data-next']
-            self.load_audios_from_js(resp['payload'][0][1][1]['playlist']['list'])
+            if(resp['payload'][0] and isinstance(resp['payload'][0][1][0],str)):
+                h = html.fromstring(resp['payload'][0][1][0])
+                cls = h.find_class("CatalogBlock__itemsContainer")[0]
+                self._data_next = 'data-next' in cls.attrib and cls.attrib['data-next']
+                self.load_audios_from_js(resp['payload'][0][1][1]['playlist']['list'])
+            elif(resp['payload'][1][0] and resp['payload'][1][0][0] and isinstance(resp['payload'][1][0][0],str)):
+                h = html.fromstring(resp['payload'][1][0][0])
+                cls = h.find_class("CatalogBlock__itemsContainer")[0]
+                self._data_next = 'data-next' in cls.attrib and cls.attrib['data-next']
+                self.load_audios_from_js(resp['payload'][1][1]['playlist']['list'])
+            else:raise ValueError("Undefined json struct. It changed.")
         self._audios_loaded=True;
 class MyAudio(Audio):
     class FILE_OPEN(vk_api.upload.FilesOpener):
@@ -117,7 +136,7 @@ class MyAudio(Audio):
             url = opt['url']
             if('ajax' not in opt['vars']):opt['vars']['ajx']=1;
             self.vk_audio.vk.http.options(url,params=opt['vars'])
-            resp = self.vk_audio.action(url,params=opt['vars'],files=photo_)
+            resp = self.vk_audio._action(url,params=opt['vars'],files=photo_)
             if(not resp):raise ValueError("undefined error")
             if('error' in resp and resp['error']):raise ValueError(resp['error'])
             return resp;
@@ -136,7 +155,7 @@ class MyAudio(Audio):
         from .audio_obj import AudioObj
         from .playlist import Playlist
         a = ",".join(i.hash if isinstance(i,AudioObj) else str(i) for i in audios)
-        resp = self.vk_audio.action("https://vk.com/al_audio.php?act=save_playlist",{
+        resp = self.vk_audio._action("https://vk.com/al_audio.php?act=save_playlist",{
             "Audios": a,
             "al": 1,
             'cover': 0 if photo is None else json_parser.dumps(photo),
@@ -160,19 +179,24 @@ class AudioSearch(Audio):
         return super().__init__(vkaudio, vkaudio.uid)
     @property
     def artists_info(self):
-        if(self._artists_info):return self._artists_info;
-        from .playlist import Playlist
-        ans = []
-        parser = html.fromstring(self._html);
-        for i in parser.find_class("title_link"):
-            if('/artist/' not in i.attrib['href']):continue
-            photo_item = i.getparent().getparent().getparent().find_class("audio_block_small_item__img");
-            data = {"name":i.text,"nick":i.attrib['href'].split("/artist/")[1].split("?")[0]}
-            if(photo_item and "style" in photo_item[0].attrib):
-                data['photo']=Playlist.grab_image_from_el(photo_item[0])
-            ans.append(data)
-        self._artists_info=ans
-        return ans;
+        if(not self._artists_info):
+            from .playlist import Playlist
+            ans = []
+            parser = html.fromstring(self._html);
+            for i in parser.find_class("title_link"):
+                if('/artist/' not in i.attrib['href']):continue
+                photo_item = i.getparent().getparent().getparent().find_class("audio_block_small_item__img");
+                data = {"name":i.text,"href":i.attrib['href'].split("?")[0]}
+                if(photo_item and "style" in photo_item[0].attrib):
+                    data['photo']=Playlist.grab_image_from_el(photo_item[0])
+                ans.append(data)
+            self._artists_info=ans
+        return self._artists_info;
     def artist_music(self,index):
         artist = self.artists_info[index];
         return self.vk_audio.load_artist(artist['nick'])
+    def zip_artist(self,index:int=0):
+        """Метод, который возвращает хеш артиста. Пототм по этому хешу можно получить его музыку - методом vk_audio.load_artist с параметром artist_hash"""
+        if("/artist/" in self.artists_info[index]['href']):
+            return 'a'+ self.artists_info[index]['href'].lstrip("https://vk.com/").replace("artist",'').lstrip("/")
+        return 's'+self.artists_info[index]['name']
