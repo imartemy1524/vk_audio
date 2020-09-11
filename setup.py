@@ -5,7 +5,7 @@ from setuptools import find_packages,setup,Extension
 my_ex = Extension("vk_audio_C_FUNC",sources = ['src/C_FUNC/PyProg.cpp'],language="c++")
 setup(
     name = "vk_audio",
-    version = "7.0",
+    version = "7.1",
 	packages=find_packages(),
     py_modules = ["vk_api",'datetime','lxml','click','curses-menu'],
     author = "Superbespalevniy chel",
