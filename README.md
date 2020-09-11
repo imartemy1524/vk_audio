@@ -14,14 +14,14 @@
 
  1. Через **логин** и **пароль**
 	
-	  ```
+	  ```python
 	  import vk_audio,vk_api
 	  vk_session = vk_api.VkApi(login='mylogin',password='mypassword')
 	  vk_session.auth()
 	  vk = vk_audio.VkAudio(vk=vk_session)
 	  ```
 	  или<br>
-    ```
+    ```python
     import vk_audio
     vk = vk_audio.VkAudio(login='mylogin',password='mypassword');
     ```
@@ -29,7 +29,7 @@
 	 <br>**Обратите внимание**: куки надо получать **ТОЛЬКО** с того же ip, на котором будет запускаться данный скрипт. Иначе, может не сработать.
    <br>**remixsid_cookie** - Кука **remixsid**. P.S. Лучше получать **НЕ** из firefox - может не работать<br>
    **your_id** - **id** пользователя, чья это кука<br>
-     ```
+     ```python
      import vk_audio
      vk = vk_audio.VkAudio(remixsid_cookie="кука",your_id=123)
      ```
@@ -37,13 +37,13 @@
 <details> 
  <summary><b>Получение аудио</b>:</summary>
   
-  ```
+  ```python
   vk = vk_audio.VkAudio(vk=vk_session)# <- объект vk_audio, полученный после авторизации
   ```
   - ***Получение аудиозаписей/плейлитов по owner_id***
   
   Owner_id - id пользователя или группы ( для групп - отрицательные )
-  ```
+  ```python
   owner = 12345#Если None - аудио будут браться из своей музыки
   data = vk.load(user_id)#получаем наши аудио 
   
@@ -64,7 +64,7 @@
   Если Вам нужен метод, чтобы получить только аудио, и, например, скачать их, то это - как раз то, что Вам нужно.
   
   **P.S.** При получении аудио этим способом их невозможно передвигать методом move 
-  ```
+  ```python
   auds = vk_audio.get_only_audios(owner_id=-1134)
   audio = auds[0]
   audio_url = audio.url# и т.п.
@@ -72,7 +72,7 @@
   
 - ***Поиск по аудиозаписям***
 
-  ```
+  ```python
     data = vk.search("Query")
     audios = data.Audio
     playlists = data.PLaylists
@@ -80,7 +80,7 @@
   ```
 - ***Получение аудиозаписей по их id***
 
-  ```
+  ```python
   audios = "100_456239018,100_456239017"#или ['100_456239018','100_456239017']
   audio_1,audio_2 = vk.get_by_id(audios)
   #Если какая-то аудиозапись не будет найдена - возвратится False
@@ -88,7 +88,7 @@
 - ***Получение аудиозапией и плейлистов артиста***
   Получить аудио и плейлисты артиста. 
   **P.S.** Если вы берете артиста из музыки пользователя или из плейлиста, то лучше воспользоваться методом `artist_music`
-  ```
+  ```python
   nickname = "imaginedragons"
   artist_id=None#ну или по id, если найдете
   audios = vk.load_artist(artist_nickname=nickname,artist_id=artist_id)
@@ -97,23 +97,23 @@
 <details> 
   <summary><b>Разные действия с аудиозаписью</b>:</summary>
   
-```
+```python
 audio = data.Audios[10] # переменная audio <- AudioObj
 ```
  - ***Редактирование***<br>
 		 Редактирование аудиозаписи
-	```
+	```python
 	if(audio.can_edit):
 	    audio.edit(title=audio.title+" Отредактировано",text="Крутые слова, которые должны быть у аудио.",artist="Полностью новый артист")
 	```
 - ***Удаление***<br>
 	    Удаление аудиозаписи 
-	```
+	```python
 	if(audio.can_delete): audio.delete()
 	```
 - ***Восстановление/добавление***<br>
 		Добавление новой аудиозаписи или восстановление удаленной 
-	```
+	```python
 	audio.add()# для добавления в группу с id 123 - audio.add(123)
 	```
 	**P.S.** Если вы только что удалили аудиозапись, то можно вызвать метод `restore` для её восстановления напрямую , но мы вам советуем использовать `add`, ибо он автоматически определяет, нужно ли добалять или восстанавливать аудио.
@@ -128,7 +128,7 @@ audio = data.Audios[10] # переменная audio <- AudioObj
   <summary><b>Передача по сети / получение hash'a</b>:</summary>
 
 Наверняка многим надо, чтобы можно было сохранить определенную аудиозапись, и потом ее восстановить. Первый вариант, который приходит на ум - сохранить ее <b>owner_id</b> и <b>item_id</b>, а потом восстановить методом get_by_id. Так, конечно, можно, но мы крайне не советуем вам так делать, если вы сохраняете больше одной аудиозаписи - т.к. каждая аудиозапись будет восстанавливаться отдельным запросом и отдельным парсингом данных из html. Вам это надо? Если нет, то следующий метод для вас.
-```
+```python
 audio_list = data.Audios #<- AudioList
 audio = audio_list[0] #<- AudioObj
 playlist = data.Playlists[1] #<- Playlist
@@ -136,21 +136,21 @@ playlist = data.Playlists[1] #<- Playlist
 - ***Сохранение и восстановление аудиозаписи по hash***<br>
 		 Возвращает hash аудиозаписи, по которой ее можно восстановить.
      <b>P.S.</b>Так 
-     ```
+     ```python
      hash = audio.zip()
      audio_restored_obj = vk_audio.AudioObj.unzip(hash,vk)[0]
      ```
      Если надо сохранить несколько аудио сразу - можно воспользоваться методом ```AudioList.zip```:
-     ```
+     ```python
      hash = audio_list.zip(0,10);#получаем hash с 1 по 10 аудиозапись
      audios_restored_objects = vk_audio.AudioObj.unzip(hash,vk)
      ```
      Ручной способ:
-     ```
+     ```python
      hash = ",".join(i.zip() for i in audio_list)
      ```
 - ***Сохранение и восстановление артиста аудиозаписи***
-  ```
+  ```python
   hashes = []
   for i,item in enumerate(audio.artists_info):
     hashes.append(i.zip_artist(i))
@@ -164,7 +164,7 @@ playlist = data.Playlists[1] #<- Playlist
   
 - ***Сохранение и восстановление артиста плейдиста***
   К сожалению, для сохранения плейлиста нет такого же безупречного метода, как и для аудиозаписи. Метод `zip` будет возвращать строку, содержащую в себе json объект плейлиста. НО! Есть возможность получить **hash** от списка аудиозаписей.
-  ```
+  ```python
   playlist_json_str = playlist.zip()
   playlist_unzipped = vk_audio.Playlist.unzip(playlist_json_str,vk)
   
